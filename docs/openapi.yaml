@@ -1,0 +1,949 @@
+openapi: 3.1.0
+info:
+  title: ZeroTrace API
+  version: 0.1.0
+  summary: Future-facing API for an optional self-hosted ZeroTrace control plane
+  description: >
+    ZeroTrace is an open-source Linux-first endpoint telemetry and behavioral detection project.
+    This API is intentionally future-facing: the MVP operates in local-only mode,
+    but these endpoints define the planned self-hosted control-plane contract for agent
+    registration, config delivery, alert ingestion, telemetry ingestion, and rule retrieval.
+servers:
+  - url: https://api.zerotrace.example.com
+    description: Example self-hosted deployment
+  - url: https://staging-api.zerotrace.example.com
+    description: Example staging deployment
+tags:
+  - name: Health
+  - name: Agents
+  - name: Config
+  - name: Alerts
+  - name: Telemetry
+  - name: Rules
+security:
+  - bearerAuth: []
+paths:
+  /v1/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns backend health for readiness and liveness probes.
+      security: []
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/status:
+    get:
+      tags: [Health]
+      summary: Service status summary
+      description: Returns service build, dependency, and ingestion status.
+      operationId: getStatus
+      responses:
+        '200':
+          description: Current service status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/agents/register:
+    post:
+      tags: [Agents]
+      summary: Register a new agent
+      description: >
+        Registers a Linux host and returns an agent identity plus its assigned configuration.
+        Intended for a future optional control plane that can be self-hosted.
+      operationId: registerAgent
+      security:
+        - enrollmentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRegistrationRequest'
+      responses:
+        '201':
+          description: Agent registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRegistrationResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/agents/{agentId}/heartbeat:
+    post:
+      tags: [Agents]
+      summary: Submit an agent heartbeat
+      description: Updates last-seen time, collector health, and lightweight runtime status.
+      operationId: postAgentHeartbeat
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentHeartbeatRequest'
+      responses:
+        '202':
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptedResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/agents/{agentId}/config:
+    get:
+      tags: [Config]
+      summary: Retrieve effective config for an agent
+      description: Returns the configuration bundle currently assigned to the agent.
+      operationId: getAgentConfig
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Effective agent configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Config'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/alerts:
+    post:
+      tags: [Alerts]
+      summary: Ingest agent alerts
+      description: Accepts one or more behavioral alerts emitted by ZeroTrace agents.
+      operationId: ingestAlerts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertIngestRequest'
+      responses:
+        '202':
+          description: Alerts accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/telemetry/events:
+    post:
+      tags: [Telemetry]
+      summary: Ingest endpoint telemetry events
+      description: >
+        Optional endpoint for shipping normalized events to a self-hosted control plane.
+        The local-only MVP does not require this path.
+      operationId: ingestEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventIngestRequest'
+      responses:
+        '202':
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/rules:
+    get:
+      tags: [Rules]
+      summary: List detection rules
+      description: Returns rules applicable to the requesting agent or management client.
+      operationId: listRules
+      parameters:
+        - in: query
+          name: platform
+          schema:
+            type: string
+            example: linux
+        - in: query
+          name: enabled
+          schema:
+            type: boolean
+        - in: query
+          name: minVersion
+          schema:
+            type: string
+            example: 0.1.0
+      responses:
+        '200':
+          description: Rule list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rule'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/rules/{ruleId}:
+    get:
+      tags: [Rules]
+      summary: Retrieve a single rule
+      operationId: getRule
+      parameters:
+        - $ref: '#/components/parameters/RuleId'
+      responses:
+        '200':
+          description: Rule detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    enrollmentToken:
+      type: apiKey
+      in: header
+      name: X-ZeroTrace-Enrollment-Token
+  parameters:
+    AgentId:
+      in: path
+      name: agentId
+      required: true
+      schema:
+        type: string
+      description: ZeroTrace agent ID
+    RuleId:
+      in: path
+      name: ruleId
+      required: true
+      schema:
+        type: string
+      description: ZeroTrace rule ID
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, time]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+          example: zerotrace-api
+        time:
+          type: string
+          format: date-time
+    ServiceStatus:
+      type: object
+      required: [status, version, uptimeSeconds, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, failed]
+        version:
+          type: string
+          example: 0.1.0
+        uptimeSeconds:
+          type: integer
+          minimum: 0
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/DependencyStatus'
+        ingestion:
+          type: object
+          properties:
+            alertsPerMinute:
+              type: integer
+              minimum: 0
+            eventsPerMinute:
+              type: integer
+              minimum: 0
+            queueDepth:
+              type: integer
+              minimum: 0
+    DependencyStatus:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [ok, degraded, failed]
+        detail:
+          type: string
+    AcceptedResponse:
+      type: object
+      required: [accepted, receivedAt]
+      properties:
+        accepted:
+          type: boolean
+          const: true
+        receivedAt:
+          type: string
+          format: date-time
+    IngestResponse:
+      type: object
+      required: [acceptedCount, rejectedCount, receivedAt]
+      properties:
+        acceptedCount:
+          type: integer
+          minimum: 0
+        rejectedCount:
+          type: integer
+          minimum: 0
+        receivedAt:
+          type: string
+          format: date-time
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    AgentRegistrationRequest:
+      type: object
+      required:
+        - hostname
+        - platform
+        - architecture
+        - agentVersion
+        - kernelVersion
+        - capabilities
+      properties:
+        hostname:
+          type: string
+          example: web-01
+        platform:
+          type: string
+          enum: [linux]
+        architecture:
+          type: string
+          example: amd64
+        agentVersion:
+          type: string
+          example: 0.1.0
+        kernelVersion:
+          type: string
+          example: 6.6.12
+        mode:
+          type: string
+          enum: [local, managed]
+          default: managed
+        capabilities:
+          type: array
+          items:
+            type: string
+          example: [process, file, archive, network]
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    AgentRegistrationResponse:
+      type: object
+      required: [agent, token, config]
+      properties:
+        agent:
+          $ref: '#/components/schemas/Agent'
+        token:
+          type: string
+          description: Control-plane bearer token for future API calls
+        config:
+          $ref: '#/components/schemas/Config'
+    AgentHeartbeatRequest:
+      type: object
+      required: [time, status, collectors]
+      properties:
+        time:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [healthy, degraded, failed]
+        collectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/CollectorHealth'
+        activeCorrelationWindows:
+          type: integer
+          minimum: 0
+        eventRatePerMinute:
+          type: integer
+          minimum: 0
+        configVersion:
+          type: string
+    Agent:
+      type: object
+      required:
+        - agentId
+        - hostname
+        - platform
+        - architecture
+        - agentVersion
+        - mode
+        - status
+        - capabilities
+      properties:
+        agentId:
+          type: string
+          example: agt_01JZT60TF8KQ7R4ABXMT6X7A88
+        hostname:
+          type: string
+          example: web-01
+        platform:
+          type: string
+          enum: [linux]
+        architecture:
+          type: string
+          example: amd64
+        kernelVersion:
+          type: string
+        agentVersion:
+          type: string
+        mode:
+          type: string
+          enum: [local, managed]
+        status:
+          type: string
+          enum: [healthy, degraded, failed, offline]
+        capabilities:
+          type: array
+          items:
+            type: string
+        lastSeenAt:
+          type: string
+          format: date-time
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    CollectorHealth:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          enum: [process, file, archive, network]
+        status:
+          type: string
+          enum: [healthy, degraded, failed]
+        detail:
+          type: string
+    Config:
+      type: object
+      required:
+        - configId
+        - version
+        - mode
+        - collectors
+        - detection
+        - output
+        - privacy
+      properties:
+        configId:
+          type: string
+          example: cfg_2026_03_09_01
+        version:
+          type: integer
+          minimum: 1
+        mode:
+          type: string
+          enum: [local, managed]
+        collectors:
+          $ref: '#/components/schemas/CollectorsConfig'
+        detection:
+          $ref: '#/components/schemas/DetectionConfig'
+        output:
+          $ref: '#/components/schemas/OutputConfig'
+        privacy:
+          $ref: '#/components/schemas/PrivacyConfig'
+        server:
+          $ref: '#/components/schemas/ServerConfig'
+        updatedAt:
+          type: string
+          format: date-time
+    CollectorsConfig:
+      type: object
+      required: [process, file, archive, network]
+      properties:
+        process:
+          $ref: '#/components/schemas/CollectorConfig'
+        file:
+          allOf:
+            - $ref: '#/components/schemas/CollectorConfig'
+            - type: object
+              properties:
+                sensitivePaths:
+                  type: array
+                  items:
+                    type: string
+                excludePaths:
+                  type: array
+                  items:
+                    type: string
+        archive:
+          allOf:
+            - $ref: '#/components/schemas/CollectorConfig'
+            - type: object
+              properties:
+                tools:
+                  type: array
+                  items:
+                    type: string
+        network:
+          allOf:
+            - $ref: '#/components/schemas/CollectorConfig'
+            - type: object
+              properties:
+                classifyPrivateAsInternal:
+                  type: boolean
+    CollectorConfig:
+      type: object
+      required: [enabled, backend]
+      properties:
+        enabled:
+          type: boolean
+        backend:
+          type: string
+          description: Collector backend selection
+          example: auto
+    DetectionConfig:
+      type: object
+      required: [correlationWindowSeconds, dedupeWindowSeconds]
+      properties:
+        correlationWindowSeconds:
+          type: integer
+          minimum: 1
+          example: 900
+        dedupeWindowSeconds:
+          type: integer
+          minimum: 1
+          example: 1800
+        defaultSensitivePatterns:
+          type: array
+          items:
+            type: string
+        allowlistedDestinations:
+          type: array
+          items:
+            type: string
+        ruleBundleVersion:
+          type: string
+    OutputConfig:
+      type: object
+      properties:
+        alertStdout:
+          type: boolean
+        alertFile:
+          type: string
+        logFormat:
+          type: string
+          enum: [text, json]
+    PrivacyConfig:
+      type: object
+      required: [captureCommandLine, remoteExportEnabled, pathRedactionMode]
+      properties:
+        captureCommandLine:
+          type: string
+          enum: [none, redacted, full]
+        remoteExportEnabled:
+          type: boolean
+        pathRedactionMode:
+          type: string
+          enum: [none, partial, full]
+    ServerConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        url:
+          type: string
+          format: uri
+        heartbeatIntervalSeconds:
+          type: integer
+          minimum: 1
+    Rule:
+      type: object
+      required:
+        - ruleId
+        - version
+        - name
+        - description
+        - severity
+        - enabled
+        - platforms
+        - lookbackSeconds
+        - sequence
+      properties:
+        ruleId:
+          type: string
+          example: linux.exfil.sequence.archive_then_egress
+        version:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        enabled:
+          type: boolean
+        platforms:
+          type: array
+          items:
+            type: string
+            enum: [linux]
+        lookbackSeconds:
+          type: integer
+          minimum: 1
+        sequence:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleCondition'
+        thresholds:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: integer
+              - type: number
+              - type: string
+        tags:
+          type: array
+          items:
+            type: string
+        mitreAttack:
+          type: array
+          items:
+            type: string
+    RuleCondition:
+      type: object
+      required: [eventType]
+      properties:
+        eventType:
+          type: string
+          enum:
+            - process.exec
+            - file.open
+            - file.read
+            - file.enumerate
+            - archive.create
+            - network.connect
+        minCount:
+          type: integer
+          minimum: 1
+        withinSeconds:
+          type: integer
+          minimum: 1
+        filters:
+          type: object
+          additionalProperties: true
+    AlertIngestRequest:
+      type: object
+      required: [agentId, alerts]
+      properties:
+        agentId:
+          type: string
+        alerts:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Alert'
+    EventIngestRequest:
+      type: object
+      required: [agentId, events]
+      properties:
+        agentId:
+          type: string
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Event'
+    Alert:
+      type: object
+      required:
+        - alertId
+        - schemaVersion
+        - ruleId
+        - severity
+        - confidence
+        - title
+        - summary
+        - firstSeenAt
+        - lastSeenAt
+        - host
+        - primaryActor
+        - evidence
+        - status
+      properties:
+        alertId:
+          type: string
+        schemaVersion:
+          type: string
+          example: v1
+        ruleId:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        title:
+          type: string
+        summary:
+          type: string
+        firstSeenAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        host:
+          $ref: '#/components/schemas/HostRef'
+        primaryActor:
+          $ref: '#/components/schemas/ProcessRef'
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertEvidence'
+        recommendedActions:
+          type: array
+          items:
+            type: string
+        mitreAttack:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [open, acknowledged, closed]
+        tags:
+          type: array
+          items:
+            type: string
+    AlertEvidence:
+      type: object
+      required: [eventType, occurredAt, detail]
+      properties:
+        eventType:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        detail:
+          type: string
+        eventId:
+          type: string
+    Event:
+      type: object
+      required:
+        - eventId
+        - schemaVersion
+        - eventType
+        - occurredAt
+        - host
+        - actor
+        - collector
+      properties:
+        eventId:
+          type: string
+        schemaVersion:
+          type: string
+          example: v1
+        eventType:
+          type: string
+          enum:
+            - process.exec
+            - file.open
+            - file.read
+            - file.enumerate
+            - archive.create
+            - network.connect
+        occurredAt:
+          type: string
+          format: date-time
+        host:
+          $ref: '#/components/schemas/HostRef'
+        actor:
+          $ref: '#/components/schemas/ProcessRef'
+        user:
+          $ref: '#/components/schemas/UserRef'
+        file:
+          $ref: '#/components/schemas/FileContext'
+        network:
+          $ref: '#/components/schemas/NetworkContext'
+        archive:
+          $ref: '#/components/schemas/ArchiveContext'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        collector:
+          $ref: '#/components/schemas/CollectorSource'
+    HostRef:
+      type: object
+      required: [hostId, hostname]
+      properties:
+        hostId:
+          type: string
+        hostname:
+          type: string
+        os:
+          type: string
+        kernelVersion:
+          type: string
+        containerContext:
+          type: string
+    UserRef:
+      type: object
+      properties:
+        uid:
+          type: integer
+          minimum: 0
+        gid:
+          type: integer
+          minimum: 0
+        username:
+          type: string
+    ProcessRef:
+      type: object
+      required: [pid, processName]
+      properties:
+        pid:
+          type: integer
+          minimum: 1
+        ppid:
+          type: integer
+          minimum: 0
+        processName:
+          type: string
+        executablePath:
+          type: string
+        commandLine:
+          type: string
+        uid:
+          type: integer
+          minimum: 0
+        username:
+          type: string
+        processTreeId:
+          type: string
+    FileContext:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Full path if not redacted
+        pathHash:
+          type: string
+          description: Stable hash when path redaction is enabled
+        operation:
+          type: string
+          enum: [open, read, enumerate, create]
+        sensitivityLabel:
+          type: string
+          example: secret
+        sizeBytes:
+          type: integer
+          minimum: 0
+    NetworkContext:
+      type: object
+      properties:
+        direction:
+          type: string
+          enum: [outbound]
+        destinationIp:
+          type: string
+        destinationPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        destinationHostname:
+          type: string
+        protocol:
+          type: string
+          enum: [tcp, udp]
+        external:
+          type: boolean
+        bytesSent:
+          type: integer
+          minimum: 0
+    ArchiveContext:
+      type: object
+      properties:
+        path:
+          type: string
+        format:
+          type: string
+          example: tar.gz
+        tool:
+          type: string
+          example: tar
+        sizeBytes:
+          type: integer
+          minimum: 0
+    CollectorSource:
+      type: object
+      required: [name, backend]
+      properties:
+        name:
+          type: string
+          enum: [process, file, archive, network]
+        backend:
+          type: string
+          example: auto
+    ErrorResponse:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          example: invalid_config
+        message:
+          type: string
+        requestId:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+        reason:
+          type: string
